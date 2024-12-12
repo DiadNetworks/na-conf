@@ -1,0 +1,153 @@
+#! /bin/bash
+### BEGIN INIT INFO
+# Provides:          policyroute
+# Required-Start:    $networking
+# Required-Stop:     $networking
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Setup Policy Routing
+# Description:       This sets up policy routing requirements.
+### END INIT INFO
+
+# Author: Joe Maimon <jmaimon@jmaimon.com>
+#
+
+# Do NOT "set -e"
+
+# PATH should only include /usr/* if it runs after the mountnfs.sh script
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+DESC="Policy Routing"
+NAME=policyroute
+#DAEMON=/usr/sbin/$NAME
+#DAEMON_ARGS="--options args"
+#PIDFILE=/var/run/$NAME.pid
+#SCRIPTNAME=/etc/init.d/$NAME
+SCRIPTNAME=/etc/init.d/policyroute
+
+SYSTEMCTL_SKIP_REDIRECT=true
+
+
+# Exit if the package is not installed
+#[ -x "$DAEMON" ] || exit 0
+
+# Read configuration variable file if it is present
+[ -r /etc/default/$NAME ] && . /etc/default/$NAME
+
+# Load the VERBOSE setting and other rcS variables
+. /lib/init/vars.sh
+
+# Define LSB log_* functions.
+# Depend on lsb-base (>= 3.2-14) to ensure that this file is present
+# and status_of_proc is working.
+. /lib/lsb/init-functions
+
+
+# table needs to be defined in /etc/iproute2/rt_tables
+table="cpegress"
+protos=""
+notintfs=""
+sourcedef=""
+sourceintfs=""
+notsourcedef=""
+destdef=""
+notdestdef=""
+defaultrt="yes"
+gatewayaddr="98.109.3.1"
+explicitdef="iif lo"
+
+if [[ "$notintfs" != "" ]]; then
+        notsourcedef="$notsourcedef 127.0.0.0/8"
+        for intf in $notintfs; do
+                notsourcedefl=`(ip -4 addr list $intf scope global |\
+                        grep inet | while read IN; do\
+                        INA=($IN); echo ${INA[1]}; done)`
+                notsourcedef="$notsourcedef $notsourcedefl"
+        done
+fi
+
+
+if [[ "$sourceintfs" != "" ]]; then
+        for intf in $sourceintfs; do
+                sourcedefl=`(ip -4 addr list $intf scope global |\
+                        grep inet | while read IN; do\
+                        INA=($IN); echo ${INA[1]}; done)`
+                sourcedef="$sourcedef $sourcedefl"
+        done
+fi
+
+
+# dont modify below
+
+#
+# Function that starts the daemon/service
+#
+
+function do_policyroute
+{
+
+  unset will_exit
+  if [[ "${table}" == "" ]]; then
+        echo "Please define table for policy routing" >&2
+        will_exit=3
+
+  fi
+
+  if [[ "$will_exit" != "" ]]; then
+          exit $will_exit
+  fi
+
+  if [[ "$1" != "" ]]; then
+        grepPAT="kernel"
+        for i in $protos; do
+                grepPAT="${grepPAT}|$i"
+        done
+        ip route list | grep -E $grepPAT | while read IN; do
+                INA=($IN)
+                if [[ "${INA[0]}" == "default" ]]; then
+                        if [[ "$defaultrt" != "yes" ]]; then continue; fi
+                fi
+                ip route $1 table $table $IN
+        done
+        if [[ "$defaultrt" == "yes" ]]; then
+  founddef=`ip route list table $table default`
+                if [[ "$gatewayaddr" != "" ]]; then
+                        ip route $1 table $table default via $gatewayaddr
+                fi
+        fi
+
+        for i in ${notdestdef}; do
+            ip rule $1 not to $i table $table
+        done
+        for i in ${notsourcedef}; do
+            ip rule $1 not from $i table $table
+        done
+        for i in ${sourcedef}; do
+            ip rule $1 from $i table $table
+        done
+        for i in ${destdef}; do
+            ip rule $1 to $i table $table
+        done
+        echo $explicitdef | while read LINE; do
+                ip rule $1 $LINE table $table
+        done
+  fi
+}
+
+case "$1" in
+
+ delete | stop)
+        do_policyroute del
+        ;;
+ add | start)
+        do_policyroute add
+        ;;
+ restart | reload | force-reload | force-restart)
+        do_policyroute del
+        do_policyroute add
+        ;;
+ *)
+        echo "Usage: policyroute [start|stop]" >&2
+        exit 3
+        ;;
+
+esac
