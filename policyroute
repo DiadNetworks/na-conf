@@ -52,7 +52,7 @@ notsourcedef=""
 destdef=""
 notdestdef=""
 defaultrt="yes"
-gatewayaddr="98.109.3.1"
+gatewayaddr="0.0.0.0"
 explicitdef="iif lo"
 
 if [[ "$notintfs" != "" ]]; then
